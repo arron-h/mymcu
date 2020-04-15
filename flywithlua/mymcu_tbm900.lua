@@ -7,6 +7,35 @@ com1_sby_freq_ref = dataref_table("sim/cockpit2/radios/actuators/com1_standby_fr
 nav1_act_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_frequency_hz")
 nav1_sby_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_standby_frequency_hz")
 crash_bar_ref = dataref_table("tbm900/switches/elec/emerg_handle")
+pilot_heading_ref = dataref_table("tbm900/knobs/ap/crs1")
+
+
+---------------------------------
+-- Useful commands
+-- sim/GPS/g1000n3_fms_inner_down
+-- sim/GPS/g1000n1_fms_inner_down
+-- sim/GPS/g1000n3_fms_outer_down
+-- sim/GPS/g1000n1_fms_outer_down
+
+-- sim/GPS/g1000n1_com_inner_down
+-- sim/GPS/g1000n1_com_inner_up
+-- sim/GPS/g1000n1_com_outer_down
+-- sim/GPS/g1000n1_com_outer_up
+
+-- sim/GPS/g1000n1_nav_inner_down
+-- sim/GPS/g1000n1_nav_inner_up
+-- sim/GPS/g1000n1_nav_outer_down
+-- sim/GPS/g1000n1_nav_outer_up
+
+-- tbm900/actuators/ap/nose_down
+-- tbm900/actuators/ap/nose_up
+
+---------------------------------
+-- Useful datarefs
+-- tbm900/knobs/ap/alt (units = 100s)
+-- tbm900/knobs/ap/hdg
+-- tbm900/knobs/ap/crs1
+
 local mixture_axis = 27  -- Axis ID
 
 -- Initial vals
@@ -38,6 +67,8 @@ if (hid_device_path ~= "") then
 	hid_device = hid_open_path(hid_device_path)
 	if (not hid_device) then
 		logMsg("Could not open HID device")
+	else
+		hid_set_nonblocking(hid_device, 1)
 	end
 else
 	logMsg("Could not find any usable HID device")
@@ -58,11 +89,17 @@ local MYMCU_CMDS_LCD_ON          = 0x6
 local MYMCU_CMDS_LCD_OFF         = 0x7
 local MYMCU_CMDS_HEARTBEAT       = 0x8
 local MYMCU_CMDS_LCD_STRING      = 0x9
+local MYMCU_CMDS_ROTARY_CHANGED  = 0xA
 -- Annunciator
 local MYMCU_ANNUC_CAUT_ON  = 0x1
 local MYMUC_ANNUC_CAUT_OFF = 0x2
 local MYMCU_ANNUC_WARN_ON  = 0x4
 local MYMUC_ANNUC_WARN_OFF = 0x8
+-- Rotary directions
+local MYMCU_ROTARYDIR_INC = 0
+local MYMCU_ROTARYDIR_DEC = 1
+-- Rotary definitions
+local ROTARY_COM1_INNER = 1
 
 -- Definitions/constants
 local AVIONICS_INIT_TIMEOUT_S = 5.0
@@ -212,6 +249,41 @@ function process_radios()
 	end
 end
 
+function process_dataref_rotary(dataref, rotaryDir, rotaryPulses, multiplier)
+	local dir = 0
+	if (rotaryDir == MYMCU_ROTARYDIR_INC) then
+		dir = -1 * multiplier
+	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
+		dir = 1 * multiplier
+	end
+	
+	dataref = dataref + (dir * (rotaryPulses*rotaryPulses))
+end
+
+function process_command_rotary(command_base, rotaryDir, rotaryPulses)
+	local suffix = ""
+	if (rotaryDir == MYMCU_ROTARYDIR_INC) then
+		suffix = "_down"
+	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
+		suffix = "_up"
+	end
+	for i=1,rotaryPulses*rotaryPulses do
+		command_once(command_base .. suffix)
+	end
+end
+
+function process_rotarys()
+	numVals, headerA, headerB, cmd, rotaryId, rotaryDir, rotaryPulses = hid_read(hid_device, 6)
+	if (numVals ~= nil and numVals > 0) then
+		if (cmd == MYMCU_CMDS_ROTARY_CHANGED) then
+			if (rotaryId == ROTARY_COM1_INNER) then
+				--process_dataref_rotary(pilot_heading_ref[0], rotaryDir, rotaryPulses, 1)
+				process_command_rotary("tbm900/actuators/ap/nose", rotaryDir, rotaryPulses)
+			end
+		end
+	end
+end
+
 local clockLastHeartbeat = os.clock()
 function send_heartbeat()
 	local clockNow = os.clock()
@@ -241,6 +313,7 @@ function process_tbm()
 	if (hid_device) then
 		process_annunciators()
 		process_radios()
+		process_rotarys()
 		send_heartbeat()
 	end
 end

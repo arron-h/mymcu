@@ -1,11 +1,15 @@
 #include <Keypad.h>
 #include <LiquidCrystal.h>
+#include <Encoder.h>
 #include <usb_desc.h>
 
 #define COM_FREQUENCY_LENGTH 7U
 #define NAV_FREQUENCY_LENGTH 6U
 #define LCD_OFF_TIMEOUT 30000U
 #define LCD_SHUTDOWN_TEXT 20000U
+
+#define ROTARY_DEBOUNCE_TIME 5 // 5ms debounce
+#define ROTARY_FRAME_TIME 60
 
 /* Remove until buttons are wired 
 const int BUTTON_ROWS = 4;
@@ -38,14 +42,34 @@ const int lcdD5Pin      = 10;
 const int lcdD6Pin      = 11;
 const int lcdD7Pin      = 12;
 const int lcdBacklightPin = 5;
+const int encoderPinA   = 6;
+const int encoderPinB   = 7;
 byte buttonRowPins[BUTTON_ROWS] = {0};
 byte buttonColPins[BUTTON_COLS] = {1,2,3};
 
 /* HID parameters */
-byte hidDataBuffer[RAWHID_RX_SIZE];
+byte hidDataBufferRx[RAWHID_RX_SIZE];
+byte hidDataBufferTx[RAWHID_TX_SIZE];
 
 /* Button setup */
 Keypad keypad = Keypad(makeKeymap(buttonValues), buttonRowPins, buttonColPins, BUTTON_ROWS, BUTTON_COLS);
+
+/* Encoder setup */
+Encoder enc = Encoder(encoderPinA, encoderPinB);
+byte lastEncoderId = 0xFF;
+unsigned long lastEncoderMs    = 0;
+unsigned long encoderFrameMs   = 0;
+int32_t lastEncoderPosition    = 0;
+int32_t encoderDetentsPerFrame = 0;
+enum EncoderDirection
+{
+  ENCODERDIR_INC,
+  ENCODERDIR_DEC,
+  ENCODERDIR_STATIC,
+
+  ENCODERDIR_INVALID
+};
+EncoderDirection encoderDirection = ENCODERDIR_INVALID;
 
 /* LCD setup */
 LiquidCrystal lcd = LiquidCrystal(lcdRSPin, lcdRWPin, lcdEnablePin, lcdD4Pin, lcdD5Pin, lcdD6Pin, lcdD7Pin);
@@ -85,6 +109,7 @@ enum MyMcuMessageCommands
   MYMCU_CMDS_LCD_OFF,
   MYMCU_CMDS_LCD_HEARTBEAT,
   MYMCU_CMDS_LCD_STRING,
+  MYMCU_CMDS_ROTARY_CHANGED,
 
   MYMCU_CMDS_MAX,
   MYMCU_CMDS_LCD_OFFSET = MYMCU_CMDS_COM_ACT_CHANGED
@@ -101,6 +126,16 @@ enum MyMcuAnnuciatorValues
 unsigned long startMs; 
 unsigned long lastHeartbeat;
 boolean startupRan = false;
+
+EncoderDirection calculateEncoderDirection(int32_t newPos, int32_t lastPos)
+{
+  if (newPos > lastPos)
+    return ENCODERDIR_INC;
+  else if (newPos < lastPos)
+    return ENCODERDIR_DEC;
+
+  return ENCODERDIR_STATIC;
+}
 
 void processAnnunciator(byte value)
 {
@@ -200,7 +235,11 @@ void setup()
   
   // Calculate start time
   startMs = millis();
-  lastHeartbeat = startMs;
+  lastHeartbeat  = startMs;
+  lastEncoderMs  = startMs;
+
+  hidDataBufferTx[0] = MYMCU_HEADER[0];
+  hidDataBufferTx[1] = MYMCU_HEADER[1];
 }
 
 void loop()
@@ -243,24 +282,62 @@ void loop()
   }
 
   /*
+   * Process Encoder(s)
+   */
+  if (msNow - lastEncoderMs > 5)
+  {
+    int32_t newEncoderPosition = enc.read();
+    if (newEncoderPosition != lastEncoderPosition)
+    {
+      lastEncoderId = 1;
+      EncoderDirection newDirection = calculateEncoderDirection(newEncoderPosition, lastEncoderPosition);
+      if (newDirection != encoderDirection)
+      {
+        encoderDetentsPerFrame = 0;
+      }
+      encoderDetentsPerFrame++;
+
+      encoderDirection    = newDirection;
+      lastEncoderPosition = newEncoderPosition;
+      lastEncoderMs       = msNow;
+    }
+  }
+  
+  // Send encoder status if suitable time
+  if (msNow - encoderFrameMs > ROTARY_FRAME_TIME)
+  {
+    if (lastEncoderId != 0xFF)
+    {
+      hidDataBufferTx[2] = (uint8_t)MYMCU_CMDS_ROTARY_CHANGED;
+      hidDataBufferTx[3] = lastEncoderId;                   // Rotary ID
+      hidDataBufferTx[4] = (uint8_t)encoderDirection;       // Rotary direction
+      hidDataBufferTx[5] = (uint8_t)encoderDetentsPerFrame; // Rotary detents per frame
+      RawHID.send(hidDataBufferTx, 0);
+      lastEncoderId  = 0xFF;
+      encoderDetentsPerFrame = 0;
+    }
+    encoderFrameMs = msNow;
+  }
+
+  /*
    * Read HID data
    */
-  int bytesRead = RawHID.recv(hidDataBuffer, 0);
-  if (bytesRead >= 4)
+  int bytesRead = RawHID.recv(hidDataBufferRx, 0);
+  if (bytesRead >= 3)
   {
-    if (hidDataBuffer[0] == MYMCU_HEADER[0] && hidDataBuffer[1] == MYMCU_HEADER[1])
+    if (hidDataBufferRx[0] == MYMCU_HEADER[0] && hidDataBufferRx[1] == MYMCU_HEADER[1])
     {
-      byte cmd = hidDataBuffer[2];
+      byte cmd = hidDataBufferRx[2];
       switch(cmd)
       {
         case MYMCU_CMDS_ANNUC_CHANGED:
-          processAnnunciator(hidDataBuffer[3]);
+          processAnnunciator(hidDataBufferRx[3]);
           break;
         case MYMCU_CMDS_COM_ACT_CHANGED:
         case MYMCU_CMDS_COM_SBY_CHANGED:
         case MYMCU_CMDS_NAV_ACT_CHANGED:
         case MYMCU_CMDS_NAV_SBY_CHANGED:
-          processLCDRadio(cmd, hidDataBuffer + 3, (size_t)(bytesRead - 3));
+          processLCDRadio(cmd, hidDataBufferRx + 3, (size_t)(bytesRead - 3));
           break;
         case MYMCU_CMDS_LCD_ON:
           setLCDState(LCDSTATE_ON);
@@ -272,7 +349,7 @@ void loop()
           lastHeartbeat = millis();
           break;
         case MYMCU_CMDS_LCD_STRING:
-          lcdPrintString(hidDataBuffer + 4, hidDataBuffer[3]);
+          lcdPrintString(hidDataBufferRx + 4, hidDataBufferRx[3]);
         default:
           break;
       }
