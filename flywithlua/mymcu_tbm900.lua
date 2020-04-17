@@ -1,5 +1,6 @@
 -- Data Refs
 joystick_axis = dataref_table("sim/joystick/joystick_axis_values") -- Table of all Joystick AXIS values
+joystick_buttons = dataref_table("sim/joystick/joystick_button_values")
 master_caution_ref = dataref_table("tbm900/lights/cas/master_caut")
 master_warning_ref = dataref_table("tbm900/lights/cas/master_warn")
 com1_act_freq_ref = dataref_table("sim/cockpit2/radios/actuators/com1_frequency_hz_833")
@@ -8,7 +9,6 @@ nav1_act_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_frequency_
 nav1_sby_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_standby_frequency_hz")
 crash_bar_ref = dataref_table("tbm900/switches/elec/emerg_handle")
 pilot_heading_ref = dataref_table("tbm900/knobs/ap/crs1")
-
 
 ---------------------------------
 -- Useful commands
@@ -36,18 +36,12 @@ pilot_heading_ref = dataref_table("tbm900/knobs/ap/crs1")
 -- tbm900/knobs/ap/hdg
 -- tbm900/knobs/ap/crs1
 
-local mixture_axis = 27  -- Axis ID
+local right_throttle_axis_idx = 28  -- Axis ID
 
 -- Initial vals
-local old_axis = joystick_axis[mixture_axis]
+local old_axis = joystick_axis[right_throttle_axis_idx]
 
-function in_top_range(axis)
-	if (axis > 0.05 and axis < 0.45) then
-		return true
-	end
-	return false
-end
-
+-- HID setup
 local hid_device_path = ""
 for i=1,NUMBER_OF_HID_DEVICES do
 	if (ALL_HID_DEVICES[i].vendor_id == 0x16C0 and
@@ -61,7 +55,7 @@ for i=1,NUMBER_OF_HID_DEVICES do
 	end
 end
 
-local hid_device = 0
+local hid_device = nil
 if (hid_device_path ~= "") then
 	logMsg("Attempting to open HID device")
 	hid_device = hid_open_path(hid_device_path)
@@ -293,18 +287,41 @@ function send_heartbeat()
 	end
 end
 
+-- dir: 0 = up; 1 = down
+function move_condition_lever(dir)
+	if (dir == 0) then
+		command_once("sim/engines/mixture_up")
+	else
+		command_once("sim/engines/mixture_down")
+	end
+end
+
+local lastICOL = joystick_buttons[(1*160) + 29]
+local lastICOR = joystick_buttons[(1*160) + 28]
 function process_tbm()
+	local clockNow = os.clock()
+	local ICOL = joystick_buttons[(1*160) + 29]
+	local ICOR = joystick_buttons[(1*160) + 28]
+	
 	-------------------------------
 	-- CONDITION LEVER
-	local new_axis = joystick_axis[mixture_axis]
+	if (ICOL ~= lastICOL) then
+		move_condition_lever(ICOL)
+		lastICOL = ICOL
+	end
+	if (ICOR ~= lastICOR) then
+		move_condition_lever(ICOR)
+		lastICOR = ICOR
+	end
+	local new_axis = joystick_axis[right_throttle_axis_idx]
 	if (new_axis ~= old_axis) then
-		if ((new_axis > old_axis and new_axis - old_axis > .25) or new_axis == 1) then
-			command_once("sim/engines/mixture_down")
-			old_axis = new_axis
-		elseif ((new_axis < old_axis and old_axis - new_axis > .25 and not in_top_range(new_axis)) or new_axis == 0) then
-			command_once("sim/engines/mixture_up")
-			old_axis = new_axis
+		local dir = new_axis - old_axis
+		if (dir < 0 and new_axis <= 0.00001) then
+			move_condition_lever(0)
+		elseif (dir > 0 and new_axis >= 0.99999) then
+			move_condition_lever(1)
 		end
+		old_axis = new_axis
 	end
 	
 	-------------------------------
