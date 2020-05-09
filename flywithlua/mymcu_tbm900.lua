@@ -3,38 +3,13 @@ joystick_axis = dataref_table("sim/joystick/joystick_axis_values") -- Table of a
 joystick_buttons = dataref_table("sim/joystick/joystick_button_values")
 master_caution_ref = dataref_table("tbm900/lights/cas/master_caut")
 master_warning_ref = dataref_table("tbm900/lights/cas/master_warn")
-com1_act_freq_ref = dataref_table("sim/cockpit2/radios/actuators/com1_frequency_hz_833")
-com1_sby_freq_ref = dataref_table("sim/cockpit2/radios/actuators/com1_standby_frequency_hz_833")
-nav1_act_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_frequency_hz")
-nav1_sby_freq_ref = dataref_table("sim/cockpit2/radios/actuators/nav1_standby_frequency_hz")
-crash_bar_ref = dataref_table("tbm900/switches/elec/emerg_handle")
-pilot_heading_ref = dataref_table("tbm900/knobs/ap/crs1")
+ap_ref = dataref_table("tbm900/lights/ap/ap")
+yd_ref = dataref_table("tbm900/lights/ap/yd")
 
----------------------------------
--- Useful commands
--- sim/GPS/g1000n3_fms_inner_down
--- sim/GPS/g1000n1_fms_inner_down
--- sim/GPS/g1000n3_fms_outer_down
--- sim/GPS/g1000n1_fms_outer_down
-
--- sim/GPS/g1000n1_com_inner_down
--- sim/GPS/g1000n1_com_inner_up
--- sim/GPS/g1000n1_com_outer_down
--- sim/GPS/g1000n1_com_outer_up
-
--- sim/GPS/g1000n1_nav_inner_down
--- sim/GPS/g1000n1_nav_inner_up
--- sim/GPS/g1000n1_nav_outer_down
--- sim/GPS/g1000n1_nav_outer_up
-
--- tbm900/actuators/ap/nose_down
--- tbm900/actuators/ap/nose_up
-
----------------------------------
--- Useful datarefs
--- tbm900/knobs/ap/alt (units = 100s)
--- tbm900/knobs/ap/hdg
--- tbm900/knobs/ap/crs1
+-- Rotaries refs
+rotary_hdg_ref = dataref_table("tbm900/knobs/ap/hdg")
+rotary_crs_ref = dataref_table("tbm900/knobs/ap/crs1")
+rotary_alt_ref = dataref_table("tbm900/knobs/ap/alt")
 
 local right_throttle_axis_idx = 28  -- Axis ID
 
@@ -46,11 +21,11 @@ local hid_device_path = ""
 for i=1,NUMBER_OF_HID_DEVICES do
 	if (ALL_HID_DEVICES[i].vendor_id == 0x16C0 and
 			ALL_HID_DEVICES[i].product_id == 0x0482 and
-			ALL_HID_DEVICES[i].usage_page == 0xffab and
-			ALL_HID_DEVICES[i].usage == 0x02ab) then
+			ALL_HID_DEVICES[i].usage_page == 0xFFAB and
+			ALL_HID_DEVICES[i].usage == 0x02AB) then
 			
 		hid_device_path = ALL_HID_DEVICES[i].path
-		logMsg("Found usable HID device")
+		logMsg("Found usable HID device (index = " .. tostring(i) .. ")")
 		break
 	end
 end
@@ -86,42 +61,32 @@ local MYMCU_CMDS_LCD_STRING      = 0x9
 local MYMCU_CMDS_ROTARY_CHANGED  = 0xA
 -- Annunciator
 local MYMCU_ANNUC_CAUT_ON  = 0x1
-local MYMUC_ANNUC_CAUT_OFF = 0x2
+local MYMCU_ANNUC_CAUT_OFF = 0x2
 local MYMCU_ANNUC_WARN_ON  = 0x4
-local MYMUC_ANNUC_WARN_OFF = 0x8
+local MYMCU_ANNUC_WARN_OFF = 0x8
+local MYMCU_ANNUC_AP_ON  = 0x10
+local MYMCU_ANNUC_AP_OFF = 0x20
+local MYMCU_ANNUC_YD_ON  = 0x40
+local MYMCU_ANNUC_YD_OFF = 0x80
 -- Rotary directions
 local MYMCU_ROTARYDIR_INC = 0
 local MYMCU_ROTARYDIR_DEC = 1
 -- Rotary definitions
-local ROTARY_COM1_INNER = 1
-
--- Definitions/constants
-local AVIONICS_INIT_TIMEOUT_S = 5.0
-local AVIONICS_ON_TIMEOUT_S   = 20.0
-
-function lcd_string(message)
-	local packedVals = {}
-	local strLen = string.len(message)
-	
-	if (strLen + 3 > MYMCU_MAX_MSG_SIZE) then -- 3 = HEADER (2 bytes) + CMD (1 byte)
-		logMsg("MyMCU: ERROR: lcd_string too large!")
-		return
-	end
-
-	-- String length first
-	table.insert(packedVals, strLen)
-	for idx=1,strLen do
-		table.insert(packedVals, string.byte(message, idx))
-	end
-	
-	-- NUL terminate
-	table.insert(packedVals, 0)
-
-	return unpack(packedVals)
-end
+local MYMCU_ROTARY_COM_INNER = 1
+local MYMCU_ROTARY_COM_OUTER = 2
+local MYMCU_ROTARY_NAV_INNER = 3
+local MYMCU_ROTARY_NAV_OUTER = 4
+local MYMCU_ROTARY_FMS_INNER = 5
+local MYMCU_ROTARY_FMS_OUTER = 6
+local MYMCU_ROTARY_HDG = 7
+local MYMCU_ROTARY_CRS = 8
+local MYMCU_ROTARY_ALT = 9
+local MYMCU_ROTARY_UPDN = 10
 
 local lastCaution = -1
 local lastWarning = -1
+local lastAutopilot = -1
+local lastYawDamper = -1
 function process_annunciators()
 	-------------------------------
 	-- CHECK CAUTION/WARNING LIGHTS
@@ -131,7 +96,7 @@ function process_annunciators()
 		if (newCaution == 1) then
 			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_CAUT_ON)
 		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMUC_ANNUC_CAUT_OFF)
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_CAUT_OFF)
 		end
 		lastCaution = newCaution
 	end
@@ -139,127 +104,49 @@ function process_annunciators()
 		if (newWarning == 1) then
 			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_WARN_ON)
 		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMUC_ANNUC_WARN_OFF)
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_WARN_OFF)
 		end
 		lastWarning = newWarning
 	end
-end
-
-function get_radio_components(freqHz, khzUnits)
-	local stringVal = tostring(freqHz)
-	local packedVals = {}
-	local offset = 0
-	local parts  = 3 -- always 3 Mhz units
-	for idx=1,2 do
-		for i=1+offset, parts+offset do
-			local part = tonumber(string.sub(stringVal, i, i))
-			table.insert(packedVals, 48 + part)
-		end
-		-- insert decimal
-		table.insert(packedVals, 46)
-		offset = offset + 3
-		parts  = khzUnits
-	end
-
-	return unpack(packedVals)
-end
-
-local AVSTATE_OFF  = 0
-local AVSTATE_PWR  = 1
-local AVSTATE_INIT = 2
-local AVSTATE_ON   = 3
-
-local avionicsState = AVSTATE_OFF
-local avionicsOnClock = -1
-local lastCrashBarPos = -1
-local crashBarUpTime = -1
-local lastCOM1ACT = -1
-local lastCOM1SBY = -1
-local lastNAV1ACT = -1
-local lastNAV1SBY = -1
-function process_radios()
-	local clockNow = os.clock()
 	-------------------------------
-	-- AVIONICS STATE
-	local newCrashParPos = math.floor(crash_bar_ref[0]) -- ref is a float
-	if (newCrashParPos ~= lastCrashBarPos) then
-		lastCrashBarPos = newCrashParPos
-		if (newCrashParPos == 1) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_LCD_OFF)
-			avionicsState = AVSTATE_OFF
+	-- CHECK AP/YD LIGHTS
+	local newAp = ap_ref[0]
+	local newYd = yd_ref[0]
+	if (newAp ~= lastAutopilot) then
+		if (newAp == 1) then
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_AP_ON)
 		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_LCD_ON)
-			avionicsState = AVSTATE_PWR
-			crashBarUpTime = clockNow
-			
-			-- Reset frequencies
-			lastCOM1ACT = -1
-			lastCOM1SBY = -1
-			lastNAV1ACT = -1
-			lastNAV1SBY = -1
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_AP_OFF)
 		end
+		lastAutopilot = newAp
 	end
-	
-	-- Move from PWR to INIT phase after timeout
-	if (avionicsState == AVSTATE_PWR and (clockNow - crashBarUpTime > AVIONICS_INIT_TIMEOUT_S)) then
-		hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_LCD_STRING, lcd_string("INITIALIZING..."))
-		avionicsState = AVSTATE_INIT
-	end
-
-	-- Move from INIT to ON phase after timeout
-	if (avionicsState == AVSTATE_INIT and (clockNow - crashBarUpTime > AVIONICS_ON_TIMEOUT_S)) then
-		avionicsState = AVSTATE_ON
-	end
-	
-	if (avionicsState == AVSTATE_ON) then
-		-------------------------------
-		-- COM1 ACTIVE
-		local newCOM1ACT = com1_act_freq_ref[0]
-		if (newCOM1ACT ~= lastCOM1ACT) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_COM_ACT_CHANGED, get_radio_components(newCOM1ACT, 3))
-			lastCOM1ACT = newCOM1ACT;
+	if (newYd ~= lastYawDamper) then
+		if (newYd == 1) then
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_YD_ON)
+		else
+			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_YD_OFF)
 		end
-		-------------------------------
-		-- COM1 STANDBY
-		local newCOM1SBY = com1_sby_freq_ref[0]
-		if (newCOM1SBY ~= lastCOM1SBY) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_COM_SBY_CHANGED, get_radio_components(newCOM1SBY, 3))
-			lastCOM1SBY = newCOM1SBY;
-		end
-		-------------------------------
-		-- NAV1 ACTIVE
-		local newNAV1ACT = nav1_act_freq_ref[0]
-		if (newNAV1ACT ~= lastNAV1ACT) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_NAV_ACT_CHANGED, get_radio_components(newNAV1ACT, 2))
-			lastNAV1ACT = newNAV1ACT;
-		end
-		-------------------------------
-		-- NAV1 STANDBY
-		local newNAV1SBY = nav1_sby_freq_ref[0]
-		if (newNAV1SBY ~= lastNAV1SBY) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_NAV_SBY_CHANGED, get_radio_components(newNAV1SBY, 2))
-			lastNAV1SBY = newNAV1SBY;
-		end
+		lastYawDamper = newYd
 	end
 end
 
 function process_dataref_rotary(dataref, rotaryDir, rotaryPulses, multiplier)
 	local dir = 0
 	if (rotaryDir == MYMCU_ROTARYDIR_INC) then
-		dir = -1 * multiplier
-	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
 		dir = 1 * multiplier
+	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
+		dir = -1 * multiplier
 	end
 	
-	dataref = dataref + (dir * (rotaryPulses*rotaryPulses))
+	dataref[0] = dataref[0] + (dir * (rotaryPulses*rotaryPulses))
 end
 
 function process_command_rotary(command_base, rotaryDir, rotaryPulses)
 	local suffix = ""
 	if (rotaryDir == MYMCU_ROTARYDIR_INC) then
-		suffix = "_down"
-	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
 		suffix = "_up"
+	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
+		suffix = "_down"
 	end
 	for i=1,rotaryPulses*rotaryPulses do
 		command_once(command_base .. suffix)
@@ -270,8 +157,27 @@ function process_rotarys()
 	numVals, headerA, headerB, cmd, rotaryId, rotaryDir, rotaryPulses = hid_read(hid_device, 6)
 	if (numVals ~= nil and numVals > 0) then
 		if (cmd == MYMCU_CMDS_ROTARY_CHANGED) then
-			if (rotaryId == ROTARY_COM1_INNER) then
-				--process_dataref_rotary(pilot_heading_ref[0], rotaryDir, rotaryPulses, 1)
+			logMsg("Incoming rotary command... id=" .. tostring(rotaryId) .. " dir=" .. tostring(rotaryDir) .. " pulses=" .. tostring(rotaryPulses))
+			if (rotaryId == MYMCU_ROTARY_COM_INNER) then
+				process_command_rotary("sim/GPS/g1000n1_com_inner", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_COM_OUTER) then
+				process_command_rotary("sim/GPS/g1000n1_com_outer", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_NAV_INNER) then
+				process_command_rotary("sim/GPS/g1000n1_nav_inner", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_NAV_OUTER) then
+				process_command_rotary("sim/GPS/g1000n1_nav_outer", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_FMS_INNER) then
+				process_command_rotary("sim/GPS/g1000n3_fms_inner", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_FMS_OUTER) then
+				process_command_rotary("sim/GPS/g1000n3_fms_outer", rotaryDir, rotaryPulses)
+			elseif (rotaryId == MYMCU_ROTARY_HDG) then
+				logMsg("Process rotary heading")
+				process_dataref_rotary(rotary_hdg_ref, rotaryDir, rotaryPulses, 1)
+			elseif (rotaryId == MYMCU_ROTARY_CRS) then
+				process_dataref_rotary(rotary_crs_ref, rotaryDir, rotaryPulses, 1)
+			elseif (rotaryId == MYMCU_ROTARY_ALT) then
+				process_dataref_rotary(rotary_alt_ref, rotaryDir, rotaryPulses, 100)
+			elseif (rotaryId == MYMCU_ROTARY_UPDN) then
 				process_command_rotary("tbm900/actuators/ap/nose", rotaryDir, rotaryPulses)
 			end
 		end
@@ -329,7 +235,6 @@ function process_tbm()
 	-- Only process if we have a valid HID device connected
 	if (hid_device) then
 		process_annunciators()
-		process_radios()
 		process_rotarys()
 		send_heartbeat()
 	end
