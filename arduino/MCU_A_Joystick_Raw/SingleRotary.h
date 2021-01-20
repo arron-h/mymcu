@@ -35,6 +35,7 @@ public:
 	
 private:
 	Encoder 		   enc;
+  int32_t            pulseCount;
 	unsigned long 	   lastMs;
 	unsigned long      frameMs;
 	int32_t			   lastPosition;

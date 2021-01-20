@@ -1,6 +1,6 @@
 #include "SingleRotary.h"
 
-#define DEBOUNCE_TIME 6U
+#define DEBOUNCE_TIME 7U
 #define ROTARY_FRAME_TIME 60U
 
 namespace
@@ -18,6 +18,7 @@ namespace
 
 SingleRotary::SingleRotary(const int pinA, const int pinB, byte id, bool flip, Ratio ratio)
 	: enc(pinA, pinB),
+  pulseCount(0),
 	lastPosition(999),
 	lastDirection(ENCODERDIR_INVALID),
 	flipDir(flip),
@@ -44,7 +45,13 @@ void SingleRotary::Process()
 			{
 				detentsPerFrame = 0;
 			}
-			detentsPerFrame++;
+
+      pulseCount++;
+
+      if (((detentPerTurn == RATIO_21) && ((pulseCount % 2) == 0)) || detentPerTurn == RATIO_11)
+      {
+        detentsPerFrame++;
+      }
 
 			lastDirection = newDirection;
 			lastPosition  = newPosition;
@@ -83,13 +90,5 @@ byte SingleRotary::Direction()
 
 byte SingleRotary::DetentsPerFrame()
 {
-	if (detentPerTurn == RATIO_11)
-	{
 		return (byte)detentsPerFrame;
-	}
-	else if (detentPerTurn == RATIO_21)
-	{
-		// Sometimes I've seen odd number of detents. Bounce maybe?
-		return (detentsPerFrame / 2) + detentsPerFrame % 2;
-	}
 }

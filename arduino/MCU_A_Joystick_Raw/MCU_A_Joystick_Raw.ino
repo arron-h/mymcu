@@ -201,6 +201,7 @@ void loop()
 			hidDataBufferTx[3] = rotary.Id();                // Rotary ID
 			hidDataBufferTx[4] = rotary.Direction();         // Rotary direction
 			hidDataBufferTx[5] = rotary.DetentsPerFrame();   // Rotary detents per frame
+
 			RawHID.send(hidDataBufferTx, 0);
 			rotary.Reset();
 		}

@@ -1,14 +1,11 @@
 -- Data Refs
 joystick_buttons = dataref_table("sim/joystick/joystick_button_values")
-master_caution_ref = dataref_table("tbm900/lights/cas/master_caut")
-master_warning_ref = dataref_table("tbm900/lights/cas/master_warn")
-ap_ref = dataref_table("tbm900/lights/ap/ap")
-yd_ref = dataref_table("tbm900/lights/ap/yd")
+starter_sw_ref = dataref_table("thranda/starter_key1")
 
 -- Rotaries refs
-rotary_hdg_ref = dataref_table("tbm900/knobs/ap/hdg")
-rotary_crs_ref = dataref_table("tbm900/knobs/ap/crs1")
-rotary_alt_ref = dataref_table("tbm900/knobs/ap/alt")
+rotary_hdg_ref = dataref_table("sim/cockpit/gyros/dg_drift_vac_deg")
+rotary_di_ref = dataref_table("sim/cockpit/autopilot/heading_mag")
+--rotary_alt_ref = dataref_table("tbm900/knobs/ap/alt")
 
 -- HID setup
 local hid_device_path = ""
@@ -77,50 +74,18 @@ local MYMCU_ROTARY_CRS = 8
 local MYMCU_ROTARY_ALT = 9
 local MYMCU_ROTARY_UPDN = 10
 
-local lastCaution = -1
 local lastWarning = -1
-local lastAutopilot = -1
-local lastYawDamper = -1
 function process_annunciators()
 	-------------------------------
 	-- CHECK CAUTION/WARNING LIGHTS
-	local newCaution = master_caution_ref[0]
-	local newWarning = master_warning_ref[0]
-	if (newCaution ~= lastCaution) then
-		if (newCaution == 1) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_CAUT_ON)
-		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_CAUT_OFF)
-		end
-		lastCaution = newCaution
-	end
+	local newWarning = starter_sw_ref[0]
 	if (newWarning ~= lastWarning) then
-		if (newWarning == 1) then
+		if (newWarning == 4) then
 			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_WARN_ON)
 		else
 			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_WARN_OFF)
 		end
 		lastWarning = newWarning
-	end
-	-------------------------------
-	-- CHECK AP/YD LIGHTS
-	local newAp = ap_ref[0]
-	local newYd = yd_ref[0]
-	if (newAp ~= lastAutopilot) then
-		if (newAp == 1) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_AP_ON)
-		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_AP_OFF)
-		end
-		lastAutopilot = newAp
-	end
-	if (newYd ~= lastYawDamper) then
-		if (newYd == 1) then
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_YD_ON)
-		else
-			hid_write(hid_device, 0, MYMCU_HEADER_A, MYMCU_HEADER_B, MYMCU_CMDS_ANNUC_CHANGED, MYMCU_ANNUC_YD_OFF)
-		end
-		lastYawDamper = newYd
 	end
 end
 
@@ -135,12 +100,12 @@ function process_dataref_rotary(dataref, rotaryDir, rotaryPulses, multiplier)
 	dataref[0] = dataref[0] + (dir * (rotaryPulses*rotaryPulses))
 end
 
-function process_command_rotary(command_base, rotaryDir, rotaryPulses)
+function process_command_rotary(command_base, rotaryDir, rotaryPulses, upStr, dnStr)
 	local suffix = ""
 	if (rotaryDir == MYMCU_ROTARYDIR_INC) then
-		suffix = "_up"
+		suffix = "_" .. upStr
 	elseif (rotaryDir == MYMCU_ROTARYDIR_DEC) then
-		suffix = "_down"
+		suffix = "_" .. dnStr
 	end
 	for i=1,rotaryPulses*rotaryPulses do
 		command_once(command_base .. suffix)
@@ -152,26 +117,19 @@ function process_rotarys()
 	if (numVals ~= nil and numVals > 0) then
 		if (cmd == MYMCU_CMDS_ROTARY_CHANGED) then
 			if (rotaryId == MYMCU_ROTARY_COM_INNER) then
-				process_command_rotary("sim/GPS/g1000n1_com_inner", rotaryDir, rotaryPulses)
+				process_command_rotary("sim/GPS/g430n1_fine", rotaryDir, rotaryPulses, "up", "down")
 			elseif (rotaryId == MYMCU_ROTARY_COM_OUTER) then
-				process_command_rotary("sim/GPS/g1000n1_com_outer", rotaryDir, rotaryPulses)
-			elseif (rotaryId == MYMCU_ROTARY_NAV_INNER) then
-				process_command_rotary("sim/GPS/g1000n1_nav_inner", rotaryDir, rotaryPulses)
-			elseif (rotaryId == MYMCU_ROTARY_NAV_OUTER) then
-				process_command_rotary("sim/GPS/g1000n1_nav_outer", rotaryDir, rotaryPulses)
+				process_command_rotary("sim/GPS/g430n1_coarse", rotaryDir, rotaryPulses, "up", "down")
 			elseif (rotaryId == MYMCU_ROTARY_FMS_INNER) then
-				process_command_rotary("sim/GPS/g1000n3_fms_inner", rotaryDir, rotaryPulses)
+				process_command_rotary("sim/GPS/g430n1_page", rotaryDir, rotaryPulses, "up", "dn")
 			elseif (rotaryId == MYMCU_ROTARY_FMS_OUTER) then
-				process_command_rotary("sim/GPS/g1000n3_fms_outer", rotaryDir, rotaryPulses)
+				process_command_rotary("sim/GPS/g430n1_chapter", rotaryDir, rotaryPulses, "up", "dn")
 			elseif (rotaryId == MYMCU_ROTARY_HDG) then
-				logMsg("Process rotary heading")
-				process_dataref_rotary(rotary_hdg_ref, rotaryDir, rotaryPulses, 1)
+				process_dataref_rotary(rotary_di_ref, rotaryDir, rotaryPulses, 1)
 			elseif (rotaryId == MYMCU_ROTARY_CRS) then
-				process_dataref_rotary(rotary_crs_ref, rotaryDir, rotaryPulses, 1)
+				process_dataref_rotary(rotary_hdg_ref, rotaryDir, rotaryPulses, 1)
 			elseif (rotaryId == MYMCU_ROTARY_ALT) then
-				process_dataref_rotary(rotary_alt_ref, rotaryDir, rotaryPulses, 100)
-			elseif (rotaryId == MYMCU_ROTARY_UPDN) then
-				process_command_rotary("tbm900/actuators/ap/nose", rotaryDir, rotaryPulses)
+				process_command_rotary("sim/instruments/barometer", rotaryDir, rotaryPulses, "up", "down")
 			end
 		end
 	end
@@ -186,16 +144,7 @@ function send_heartbeat()
 	end
 end
 
--- dir: 0 = up; 1 = down
-function move_condition_lever(dir)
-	if (dir == 0) then
-		command_once("sim/engines/mixture_up")
-	else
-		command_once("sim/engines/mixture_down")
-	end
-end
-
-function process_tbm()
+function process_pa28()
 	local clockNow = os.clock()
 	
 	-------------------------------
@@ -208,4 +157,4 @@ function process_tbm()
 	end
 end
 
-do_every_frame("process_tbm()")
+do_every_frame("process_pa28()")
