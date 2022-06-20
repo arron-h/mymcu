@@ -5,7 +5,6 @@ starter_sw_ref = dataref_table("thranda/starter_key1")
 -- Rotaries refs
 rotary_hdg_ref = dataref_table("sim/cockpit/gyros/dg_drift_vac_deg")
 rotary_di_ref = dataref_table("sim/cockpit/autopilot/heading_mag")
---rotary_alt_ref = dataref_table("tbm900/knobs/ap/alt")
 
 -- HID setup
 local hid_device_path = ""
